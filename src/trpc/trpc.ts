@@ -1,6 +1,8 @@
 // import { currentUser } from "@clerk/nextjs/server";
 // import { initTRPC, TRPCError } from "@trpc/server";
 import { initTRPC } from "@trpc/server";
+import dbConnect from "@/utils/mongoConnect";
+dbConnect()
 // import { PrismaClient } from "../lib/generated/prisma/client";
 
 const t = initTRPC.create();
