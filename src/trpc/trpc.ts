@@ -1,11 +1,10 @@
 // import { currentUser } from "@clerk/nextjs/server";
 // import { initTRPC, TRPCError } from "@trpc/server";
 import { initTRPC } from "@trpc/server";
-import dbConnect from "@/utils/mongoConnect";
-dbConnect()
+import { Context,createContext } from "./context";
 // import { PrismaClient } from "../lib/generated/prisma/client";
 
-const t = initTRPC.create();
+const t = initTRPC.context<Context>().create();
 // const middleware = t.middleware;
 // const prisma = new PrismaClient();
 
@@ -34,4 +33,5 @@ const t = initTRPC.create();
 // Base router and procedure helpers
 export const router = t.router;
 export const procedure = t.procedure;
+export {createContext}
 // export const privateProcedure = t.procedure.use(isUserAuthenticated);

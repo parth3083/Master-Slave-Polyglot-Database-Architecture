@@ -1,90 +1,82 @@
 import { ISyncMessage } from "@/cqrs/types";
-import dbConnect from "@/utils/mongoConnect";
-dbConnect();
-import { queueService } from "@/cqrs/queueBus";
+import { PrismaClient } from "@/generated/prisma";
+import { MongoClient, Db } from "mongodb";
 
-interface ISyncHandler {
-  start(): void;
-  end(): void;
+interface IsyncHadler {
   processMessage(message: ISyncMessage): Promise<boolean>;
 }
 
-export class SyncHandler implements ISyncHandler {
-  private isRunning: boolean = false;
-  private processingInterval: NodeJS.Timeout | null = null;
-  private readonly POLL_INTERVAL = 1000; //1second
-  private readonly MAX_RETRIES = 5;
+export class PostgresToMongoSyncHandler implements IsyncHadler {
+  private masterDb: PrismaClient;
+  private slaveDb: Db;
 
-  constructor(private handlerId: string) {}
-
-  start(): void {
-    if (this.isRunning) {
-      console.log(`Sync handler ${this.handlerId} isalready running`);
-      return;
-    }
-    this.isRunning = true;
-    console.log(`Starting Sync Handler ${this.handlerId}`);
-
-    // start polling messages
-    this.processingInterval = setInterval(async () => {
-      await this.pollAndProcess();
-    }, this.POLL_INTERVAL);
-  }
-
-  stop(): void {
-    if (!this.isRunning) return;
-    this.isRunning = false;
-    if (this.processingInterval) {
-      clearInterval(this.processingInterval);
-      this.processingInterval = null;
-    }
-    console.log(`Stopped the sync handler ${this.handlerId}`);
-  }
-
-  private async pollAndProcess(): Promise<void> {
-    if (!this.isRunning) return;
-    try {
-      const message = await queueService.getSyncMessage();
-      if (message) {
-        console.log(
-          `Handler ${this.handlerId} processing the message : ${message.id}`
-        );
-        const success = await this.processMessage(message);
-        if (success) {
-          await queueService.acknowledgeMessage(message.id);
-          console.log(`Message ${message.id} processed successfully`);
-        } else {
-          await this.handleFailedMessage(message);
-        }
-      }
-    } catch (error) {
-      console.error(`Error in sync handler ${this.handlerId}:`, error);
-    }
+  constructor(masterDb: PrismaClient, mongoDb: Db) {
+    this.masterDb = masterDb;
+    this.slaveDb = mongoDb;
   }
   async processMessage(message: ISyncMessage): Promise<boolean> {
     try {
-      switch (message.operation) {
-        case "CREATE":
-          return await this.handleCreate(message);
-        case "UPDATE":
-          return await this.handleCreate(message);
-        case "DELETE":
-          return await this.handleCreate(message);
+      console.log(
+        `Processing thee sync message: ${message.id} for table :${message.table}`
+      );
+      switch(message.operation){
+        case 'CREATE':
+          await this.handleCreate(message)
+        case 'UPDATE':
+          await this.handleUpdate(message)
+        case 'DELETE':
+          await this.handleDelete(message)
         default:
-          console.log(`Unknow operation ${message.operation}`);
-          return false;
+          throw new Error(`Unknown operation : ${message.operation}`)  
       }
+      console.log(`Sync completed for the message  : ${message.id}`)
+      return true
     } catch (error) {
-      console.error(`Failed to process message ${message.id}:`, error);
+      console.error(`Sync failed for message: ${message.id}`, error);
       return false;
     }
   }
-  private handleCreate(message:ISyncMessage):Promise<boolean>{
-    try {
-        const {table, data} = message
-        await ()
-    } catch (error) {
-        
-    }
+  private async handleCreate(message: ISyncMessage): Promise<void> {
+    const { table, data } = message;
+    const mongoData = this.transformToMongoFormat(data, table);
+    
+    await this.slaveDb.collection(table).insertOne(mongoData);
   }
+
+  private async handleUpdate(message: ISyncMessage): Promise<void> {
+    const { table, recordId, data } = message;
+
+    const mongoData = this.transformToMongoFormat(data, table);
+
+    await this.slaveDb.collection(table).replaceOne(
+      { id: parseInt(recordId) }, 
+      mongoData,
+      { upsert: true } 
+    );
+  }
+
+  private async handleDelete(message: ISyncMessage): Promise<void> {
+    const { table, recordId } = message;
+    
+    await this.slaveDb.collection(table).deleteOne({
+      id: parseInt(recordId)
+    });
+  }
+    private transformToMongoFormat(data: any, table: string): any {
+    
+    const transformed = { ...data };
+  
+    if (transformed.createdAt) {
+      transformed.createdAt = new Date(transformed.createdAt);
+    }
+    if (transformed.updatedAt) {
+      transformed.updatedAt = new Date(transformed.updatedAt);
+    }
+    
+    transformed._syncedAt = new Date();
+    transformed._sourceTable = table;
+    
+    return transformed;
+  }
+
 }
